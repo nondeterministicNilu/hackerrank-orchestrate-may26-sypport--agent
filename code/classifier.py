@@ -233,9 +233,7 @@ def validate_status(ticket, retrieved_documents, request_type):
 
 if __name__ == "__main__":
 
-    from retriever import load_documents, search_documents
-
-    documents = load_documents()
+    from retriever import search_documents
 
     ticket = {
         "Subject": "Password reset problem",
@@ -248,7 +246,6 @@ if __name__ == "__main__":
 
     retrieved_documents = search_documents(
         query,
-        documents,
         company=ticket["Company"],
         top_k=5
     )

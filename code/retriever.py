@@ -1,3 +1,4 @@
+import os
 from pathlib import Path
 import numpy as np
 import pandas as pd
@@ -14,22 +15,10 @@ embedding_model_name = 'nomic-embed-text-v2-moe'
 PROJECT_ROOT = Path(__file__).resolve().parent.parent
 DATA_FOLDER = PROJECT_ROOT / "data"
 
-OPTIMAL_SCORE = 10
+OPTIMAL_SCORE = 0.1  # Adjust this threshold based on your requirements
 
 # Load stopwords
 stop_words = set(stopwords.words("english"))
-
-# conn = psycopg2.connect(
-#     dbname="hackerrank-support-agent",
-#     user="postgres",
-#     password="Password@123",
-#     host="localhost",
-#     port="5432"
-# )
-
-# # Crucial: This ensures python understands the pgvector format
-# register_vector(conn)
-# cursor = conn.cursor()
 
 def tokenize(text): 
     tokens = word_tokenize(text.lower())
@@ -86,14 +75,6 @@ def load_documents():
                         cursor.execute(query, (id.lower(), company, file.name, content, np.zeros(768)))  # Insert an empty vector for empty content
 
 
-                    # documents.append(
-                    #     {
-                    #         "company": company,
-                    #         "file_name": file.name,
-                    #         "content": content
-                    #     }
-                    # )
-
                 except Exception as e:
                     print(f"Could not read {file}: {e}")
         conn.commit()
@@ -101,58 +82,199 @@ def load_documents():
         conn.close()
     return pd.DataFrame(documents)
 
+def search_documents(query, company=None, top_k=5, score_threshold=OPTIMAL_SCORE):
 
-def search_documents(query, documents, company=None, top_k=5):
-
-    # Filter by company if company is available
-    if company and company != "None":
-        results = documents[
-            documents["company"].str.lower() == company.lower()
-        ].copy()
-    else:
-        results = documents.copy()
-
-
-    # Tokenize documents
-    corpus = results["content"].apply(tokenize).tolist()
-
-    # Create BM25 index
-    bm25 = BM25Okapi(corpus)
-
-    # Tokenize query
-    query_tokens = tokenize(query)
-
-    # Calculate BM25 scores
-    scores = bm25.get_scores(query_tokens)
-
-    results["score"] = scores
-
-    # Sort by score
-    results = results.sort_values(
-        "score",
-        ascending=False
+    # Generate query embedding using Ollama
+    embedding_response = ollama.embed(
+        model=embedding_model_name,
+        input=query
     )
 
-    results = results[results["score"] >= OPTIMAL_SCORE]
+    query_embedding = embedding_response["embeddings"][0]
+
+    # Connect to PostgreSQL
+    conn = psycopg2.connect(
+        dbname="hackerrank-support-agent",
+        user="postgres",
+        password="Password@123",
+        host="localhost",
+        port="5432"
+    )
+
+    sql = """
+        WITH keyword_results AS (
+
+            SELECT
+                company,
+                file_name,
+                content,
+
+                ROW_NUMBER() OVER (
+                    ORDER BY
+                        ts_rank_cd(
+                            to_tsvector('english', content),
+                            plainto_tsquery('english', %s)
+                        ) DESC
+                ) AS keyword_rank
+
+            FROM "dbo"."data"
+
+            WHERE
+                (%s IS NULL OR LOWER(company) = LOWER(%s))
+                AND
+                to_tsvector('english', content)
+                @@ plainto_tsquery('english', %s)
+
+            LIMIT 50
+        ),
+
+        vector_results AS (
+
+            SELECT
+                company,
+                file_name,
+                content,
+
+                ROW_NUMBER() OVER (
+                    ORDER BY content_vector <=> %s::vector
+                ) AS vector_rank
+
+            FROM "dbo"."data"
+
+            WHERE
+                (%s IS NULL OR LOWER(company) = LOWER(%s))
+
+            ORDER BY content_vector <=> %s::vector
+
+            LIMIT 50
+        ),
+
+        hybrid_results AS (
+
+            SELECT
+                COALESCE(k.company, v.company) AS company,
+                COALESCE(k.file_name, v.file_name) AS file_name,
+                COALESCE(k.content, v.content) AS content,
+
+                (
+                    COALESCE(1.0 / (60 + k.keyword_rank), 0) +
+                    COALESCE(1.0 / (60 + v.vector_rank), 0)
+                ) AS score
+
+            FROM keyword_results k
+
+            FULL OUTER JOIN vector_results v
+                ON k.company = v.company
+                AND k.file_name = v.file_name
+        )
+
+        SELECT
+            company,
+            file_name,
+            content,
+            score
+
+        FROM hybrid_results
+
+        WHERE score >= %s
+
+        ORDER BY score DESC
+
+        LIMIT %s
+    """
+
+    params = (
+        query,
+
+        company,
+        company,
+        query,
+
+        str(query_embedding),
+        company,
+        company,
+        str(query_embedding),
+
+        OPTIMAL_SCORE,
+        top_k
+    )
+
+    query = "password reset"
+
+    embedding_response = ollama.embed(
+        model=embedding_model_name,
+        input=query
+    )
+
+    query_embedding = embedding_response["embeddings"][0]
+
+    # cursor = conn.cursor()
+
+    # cursor.execute(sql, params)
+    # results = cursor.fetchall()
+
+    results = pd.read_sql_query(
+        sql,
+        conn,
+        params=params
+    )
+
+    conn.close()
+
+    return results
+
+
+# def search_documents(query, documents, company=None, top_k=5):
+
+#     # Filter by company if company is available
+#     if company and company != "None":
+#         results = documents[
+#             documents["company"].str.lower() == company.lower()
+#         ].copy()
+#     else:
+#         results = documents.copy()
+
+
+#     # Tokenize documents
+#     corpus = results["content"].apply(tokenize).tolist()
+
+#     # Create BM25 index
+#     bm25 = BM25Okapi(corpus)
+
+#     # Tokenize query
+#     query_tokens = tokenize(query)
+
+#     # Calculate BM25 scores
+#     scores = bm25.get_scores(query_tokens)
+
+#     results["score"] = scores
+
+#     # Sort by score
+#     results = results.sort_values(
+#         "score",
+#         ascending=False
+#     )
+
+#     results = results[results["score"] >= OPTIMAL_SCORE]
     
-    # Return top results
-    return results.head(top_k)
+#     # Return top results
+#     return results.head(top_k)
 
 
 
 
 if __name__ == "__main__":
 
-    documents = load_documents()
-    print(f"Loaded {len(documents)} documents")
+    # documents = load_documents()
+    # print(f"Loaded {len(documents)} documents")
     # # print(documents.head())
 
-    # results = search_documents(
-    #     "some random thought",
-    #     documents,
-    #     company="HackerRank"
-    # )
-    # print(results[["company", "file_name", "score"]])
+    results = search_documents(
+        "tell me about hackerrank exam platform",
+        company="HackerRank"
+    )
+    # print("Retrieved Documents:", results)
+    print(results[["company", "file_name", "score"]])
 
     # print("Testing database connection...")
     # cursor.execute("SELECT * FROM dbo.data;")

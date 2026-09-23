@@ -11,9 +11,8 @@ def process_ticket(ticket, documents):
     query = f"{subject} {issue}"
 
     # Retrieve relevant documents
-    results = search_documents(
+    search_documents(
         query,
-        documents,
         company=company,
         top_k=5
     )

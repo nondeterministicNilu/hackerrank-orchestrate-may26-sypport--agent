@@ -13,7 +13,6 @@ from classifier import (
 
 class TicketState(TypedDict):
     ticket: dict
-    documents: object
     retrieved_documents: object
     request_type: dict
     status: str
@@ -28,7 +27,6 @@ def retrieve(state):
     query = f"{ticket['Subject']} {ticket['Issue']}"
     retrieved_documents = search_documents(
         query,
-        state["documents"],
         company=ticket["Company"],
         top_k=5
     )
