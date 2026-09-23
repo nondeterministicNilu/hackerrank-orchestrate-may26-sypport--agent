@@ -1,14 +1,18 @@
+import os
 import pandas as pd
 from pathlib import Path
 from retriever import load_documents
 # from agent import process_ticket
 from graph import build_graph
+from dotenv import load_dotenv
+
+load_dotenv()
 
 # Project paths
 PROJECT_ROOT = Path(__file__).resolve().parent.parent
 
-INPUT_FILE = PROJECT_ROOT / "support_tickets" / "support_tickets.csv"
-OUTPUT_FILE = PROJECT_ROOT / "support_tickets" / "output.csv"
+INPUT_FILE = PROJECT_ROOT / "support_tickets" / os.getenv("INPUT_FILE_NAME")
+OUTPUT_FILE = PROJECT_ROOT / "support_tickets" / os.getenv("OUTPUT_FILE_NAME")
 
 
 # Load tickets
